@@ -67,13 +67,17 @@ func main() {
 		instanceID = resp
 	}
 
-	creds := credentials.NewStaticCredentials(awsAccessKey, awsSecretAccessKey, "")
+	var creds *credentials.Credentials
+	if len(awsAccessKey) != 0 || len(awsSecretAccessKey) != 0 {
+		creds = credentials.NewStaticCredentials(awsAccessKey, awsSecretAccessKey, "")
+	}
 
-	svc := ec2.New(session.New(), &aws.Config{Credentials: creds, Region: aws.String(region)})
+	sess, err := session.NewSession(&aws.Config{Credentials: creds, Region: aws.String(region)})
+	svc := ec2.New(sess, &aws.Config{Credentials: creds, Region: aws.String(region)})
 
 	params := &ec2.DescribeInstancesInput{
 		Filters: []*ec2.Filter{
-			&ec2.Filter{
+			{
 				Name: aws.String("instance-id"),
 				Values: []*string{
 					aws.String(instanceID),
@@ -94,7 +98,7 @@ func main() {
 	for idx := range resp.Reservations {
 		for _, inst := range resp.Reservations[idx].Instances {
 			// https: //godoc.org/github.com/awslabs/aws-sdk-go/service/ec2#Instance
-			s := []string{}
+			var s []string
 			for _, tag := range inst.Tags {
 				s = append(s, *tag.Key+kvdelim+*tag.Value)
 			}
