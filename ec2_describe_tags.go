@@ -15,17 +15,63 @@ import (
 	"github.com/aws/aws-sdk-go/service/ec2"
 )
 
-func get(url string) (string, error) {
-	response, err := http.Get(url)
+const (
+	awsTokenTTLHeader      = "X-aws-ec2-metadata-token-ttl-seconds"
+	awsTokenHeader         = "X-aws-ec2-metadata-token"
+	awsIMDSURL             = "http://169.254.169.254"
+	awsIMDSv2TokenPath     = "latest/api/token"
+	awsIMDSRegionPath      = "latest/meta-data/placement/region"
+	awsIMDSInstanceIDPath  = "latest/meta-data/instance-id"
+	awsIMDSv2TokenTTL      = "30"
+)
+
+//get imsdv2 token
+func getToken() (string, error) {
+	client := http.Client{}
+
+	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/%s", awsIMDSURL, awsIMDSv2TokenPath), nil)
 	if err != nil {
 		return "", err
 	}
-	defer response.Body.Close()
-	contents, err := ioutil.ReadAll(response.Body)
+
+	req.Header.Set(awsTokenTTLHeader, awsIMDSv2TokenTTL)
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
-	return string(contents), nil
+	defer resp.Body.Close()
+
+	token, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return string(token), nil
+}
+
+func getMetadata(token, path string) (string, error) {
+	client := http.Client{}
+
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/%s", awsIMDSURL, path), nil)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set(awsTokenHeader, token)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
 }
 
 func main() {
@@ -48,23 +94,28 @@ func main() {
 
 	flag.Parse()
 
-	if queryMetadata && region == "" {
-		resp, err := get("http://169.254.169.254/latest/meta-data/placement/availability-zone")
+	if queryMetadata {
+		token, err := getToken()
 		if err != nil {
-			fmt.Printf("%s", err)
+			fmt.Printf("Failed to get IMDSv2 token: %s", err)
 			os.Exit(1)
 		}
-		sz := len(resp)
-		region = resp[:sz-1]
-	}
 
-	if queryMetadata && instanceID == "" {
-		resp, err := get("http://169.254.169.254/latest/meta-data/instance-id")
-		if err != nil {
-			fmt.Printf("%s", err)
-			os.Exit(1)
+		if region == "" {
+			region, err = getMetadata(token, awsIMDSRegionPath)
+			if err != nil {
+				fmt.Printf("%s", err)
+				os.Exit(1)
+			}
 		}
-		instanceID = resp
+
+		if instanceID == "" {
+			instanceID, err = getMetadata(token, awsIMDSInstanceIDPath)
+			if err != nil {
+				fmt.Printf("%s", err)
+				os.Exit(1)
+			}
+		}
 	}
 
 	var creds *credentials.Credentials
